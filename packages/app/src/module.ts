@@ -8,10 +8,11 @@
  * You should have received a copy of the MIT License along with this program.
  */
 
-import { ExtractClassDefinition, JSONPartial, jsonSerializer, PlainSchemaProps, t, ValidationFailed } from '@deepkit/type';
+import { ExtractClassDefinition, FreeFluidDecorator, JSONPartial, jsonSerializer, PlainSchemaProps, t, ValidationFailed } from '@deepkit/type';
 import { ConfigDefinition, InjectorModule, InjectToken, ProviderWithScope } from '@deepkit/injector';
 import { ClassType, CustomError } from '@deepkit/core';
 import { EventListener } from '@deepkit/event';
+import type { MiddlewareApi } from './middleware';
 import type { WorkflowDefinition } from '@deepkit/workflow';
 
 export type DefaultObject<T> = T extends undefined ? {} : T;
@@ -45,10 +46,12 @@ export interface ModuleOptions {
      * ```typescript
      * import {t} from '@deepkit/type';
      *
+     * const myModuleConfig = new AppModuleConfig({
+     *     debug: t.boolean.default(false),
+     * });
+     *
      * const myModule = new AppModule({
-     *     config: {
-     *         debug: t.boolean.default(false),
-     *     }
+     *     config: myModuleConfig
      * });
      * ```
      */
@@ -97,6 +100,11 @@ export interface ModuleOptions {
     listeners?: (EventListener<any> | ClassType)[];
 
     /**
+     * HTTP middlewares.
+     */
+    middlewares?: FreeFluidDecorator<MiddlewareApi>[];
+
+    /**
      * Import another module.
      */
     imports?: AppModule<any, any>[];
@@ -116,7 +124,6 @@ function cloneOptions<T extends ModuleOptions>(options: T): T {
 export class ConfigurationInvalidError extends CustomError { }
 
 let moduleId = 0;
-
 
 export class AppModuleConfig<T extends PlainSchemaProps> extends ConfigDefinition<ExtractClassDefinition<T>> {
     constructor(public config: T) {
@@ -194,6 +201,12 @@ export class AppModule<T extends ModuleOptions, NAME extends string = ''> extend
         if (!this.options.listeners) this.options.listeners = [];
 
         this.options.listeners.push(...listener);
+    }
+
+    addMiddleware(...middlewares: FreeFluidDecorator<MiddlewareApi>[]) {
+        if (!this.options.middlewares) this.options.middlewares = [];
+
+        this.options.middlewares.push(...middlewares);
     }
 
     private hasConfigOption(path: string): boolean {

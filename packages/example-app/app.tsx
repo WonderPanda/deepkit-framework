@@ -1,14 +1,14 @@
 #!/usr/bin/env ts-node-script
 import 'reflect-metadata';
-import { Application, KernelModule } from '@deepkit/framework';
-import { BodyValidation, http, Redirect } from '@deepkit/http';
+import { Application } from '@deepkit/framework';
+import { BodyValidation, http, HttpModule, Redirect } from '@deepkit/http';
 import { injectable } from '@deepkit/injector';
 import { Logger } from '@deepkit/logger';
 import { Database } from '@deepkit/orm';
 import { SQLiteDatabaseAdapter } from '@deepkit/sqlite';
 import { entity, sliceClass, t } from '@deepkit/type';
 import { Website } from './views/website';
-import { cli, Command } from '@deepkit/app';
+import { cli, Command, middleware } from '@deepkit/app';
 
 const SegfaultHandler = require('segfault-handler');
 SegfaultHandler.registerHandler('crash.log');
@@ -37,6 +37,7 @@ class AddUserDto extends sliceClass(User).exclude('id', 'created') {
 export class TestCommand implements Command {
     constructor(protected logger: Logger, protected database: SQLiteDatabase) {
     }
+
     async execute(): Promise<any> {
         this.logger.log('Loading users ...');
         const users = await this.database.query(User).find();
@@ -113,13 +114,24 @@ class HelloWorldController {
         return peter;
     }
 }
+const compression = require('compression');
 
 Application.create({
-    controllers: [HelloWorldController, TestCommand],
     imports: [
-        KernelModule.configure({
-            workers: 1, debug: true, publicDir: 'public', httpLog: false,
-            databases: [SQLiteDatabase], migrateOnStartup: true
-        }),
+        HttpModule.configure({
+            middlewares: [
+                middleware.for(compression({threshold: 0}))
+                    .forControllers(HelloWorldController)
+            ]
+        })
+    ],
+
+    middlewares: [
+        // middleware.for(MyMiddleware)
+        //     .forRouteNames('login', 'api_*')
+        //     .forControllers(HelloWorldController),
+
+        middleware.for(compression({threshold: 0}))
+            .forControllers(HelloWorldController)
     ]
 }).run();

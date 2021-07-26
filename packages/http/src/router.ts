@@ -30,6 +30,7 @@ import { HttpRequest, HttpRequestQuery, HttpRequestResolvedParameters } from './
 import { BasicInjector, injectable, InjectOptions, TagRegistry } from '@deepkit/injector';
 import { Logger } from '@deepkit/logger';
 import { HttpControllers } from './controllers';
+import { AppModule, MiddlewareRegistry } from '@deepkit/app';
 
 export type RouteParameterResolverForInjector = ((injector: BasicInjector) => any[] | Promise<any[]>);
 type ResolvedController = { parameters: RouteParameterResolverForInjector, routeConfig: RouteConfig, uploadedFiles: { [name: string]: UploadedFile } };
@@ -84,6 +85,7 @@ function parseBody(form: any, req: IncomingMessage, files: { [name: string]: Upl
 }
 
 export interface RouteControllerAction {
+    contextId?: number;
     controller: ClassType;
     methodName: string;
 }
@@ -118,6 +120,11 @@ export class RouteConfig {
 
     public serializationOptions?: JitConverterOptions;
     public serializer?: Serializer;
+
+    /**
+     * When assigned defines where this route came from.
+     */
+    public module?: AppModule<any>;
 
     resolverForToken: Map<any, ClassType> = new Map();
 
@@ -323,8 +330,9 @@ export class Router {
         controllers: HttpControllers,
         private logger: Logger,
         tagRegistry: TagRegistry,
+        private middlewareRegistry: MiddlewareRegistry = new MiddlewareRegistry,
     ) {
-        for (const controller of controllers.controllers) this.addRouteForController(controller);
+        for (const controller of controllers.controllers) this.addRouteForController(controller.controller, controller.contextId, controller.module);
     }
 
     getRoutes(): RouteConfig[] {
@@ -332,7 +340,9 @@ export class Router {
     }
 
     static forControllers(controllers: ClassType[], tagRegistry: TagRegistry = new TagRegistry()): Router {
-        return new this(new HttpControllers(controllers), new Logger([], []), tagRegistry);
+        return new this(new HttpControllers(controllers.map(v => {
+            return {contextId: 0, controller: v};
+        })), new Logger([], []), tagRegistry);
     }
 
     protected getRouteCode(compiler: CompilerContext, routeConfig: RouteConfig): string {
@@ -351,6 +361,38 @@ export class Router {
         const hasParameters = parsedRoute.getParameters().length > 0;
         let requiresAsyncParameters = false;
         let setParametersFromPath = '';
+
+        const fullPath = routeConfig.getFullPath();
+        const middlewares = this.middlewareRegistry.configs.filter((v) => {
+            if (v.config.controllers && !v.config.controllers.includes(routeConfig.action.controller)) {
+                return false;
+            }
+
+            if (v.config.excludeControllers && v.config.excludeControllers.includes(routeConfig.action.controller)) {
+                return false;
+            }
+
+            if (v.config.modules && (!routeConfig.module || !v.config.modules.includes(routeConfig.module))) {
+                return false;
+            }
+
+            if (v.config.routes) {
+                for (const route of v.config.routes) {
+                    if (route.httpMethod !== 'ANY' && route.httpMethod !== routeConfig.httpMethod) return false;
+                    if (route.category && route.category !== routeConfig.category) return false;
+                    if (route.path) {
+                        if (route.path.includes('*') || route.path.includes('?')) {
+                            const regex = new RegExp('^' + route.path + '$');
+                            if (!regex.test(fullPath)) return false;
+                        } else {
+                            if (!fullPath.startsWith(route.path)) return false;
+                        }
+                    }
+                }
+            }
+
+            return true;
+        });
 
         for (const parameter of parsedRoute.getParameters()) {
             if (parsedRoute.customValidationErrorHandling === parameter) {
@@ -395,7 +437,7 @@ export class Router {
                     }
                 }
 
-                const injectorOptions = parameter.property.data['deepkit/inject'] as InjectOptions | undefined
+                const injectorOptions = parameter.property.data['deepkit/inject'] as InjectOptions | undefined;
 
                 const injectorToken = injectorOptions && injectorOptions.token ? injectorOptions.token : (parameter.property.type === 'class' ? parameter.property.getResolvedClassType() : undefined);
                 const injectorTokenVar = compiler.reserveVariable('classType', injectorToken);
@@ -441,7 +483,7 @@ export class Router {
                 }
 
                 if (!parameter.isPartOfPath()) {
-                    let injectorGet = `parameters.${parameter.property.name} = _injector.get(${injectorTokenVar});`
+                    let injectorGet = `parameters.${parameter.property.name} = _injector.get(${injectorTokenVar});`;
                     if (injectorOptions && injectorOptions.optional) {
                         injectorGet = `try {parameters.${parameter.property.name} = _injector.get(${injectorTokenVar}); } catch (e) {}`;
                     }
@@ -530,7 +572,7 @@ export class Router {
         this.fn = undefined;
     }
 
-    public addRouteForController(controller: ClassType) {
+    public addRouteForController(controller: ClassType, contextId: number, module?: AppModule<any>) {
         const data = httpClass._fetch(controller);
         if (!data) throw new Error(`Http controller class ${getClassName(controller)} has no @http.controller decorator.`);
         const schema = getClassSchema(controller);
@@ -538,8 +580,10 @@ export class Router {
         for (const action of data.getActions()) {
             const routeConfig = new RouteConfig(action.name, action.httpMethod, action.path, {
                 controller,
+                contextId,
                 methodName: action.methodName
             });
+            routeConfig.module = module;
             routeConfig.parameterRegularExpressions = action.parameterRegularExpressions;
             routeConfig.throws = action.throws;
             routeConfig.description = action.description;

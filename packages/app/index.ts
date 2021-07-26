@@ -4,3 +4,4 @@ export * from './src/configuration';
 export * from './src/module';
 export * from './src/service-container';
 export * from './src/utils';
+export * from './src/middleware';
