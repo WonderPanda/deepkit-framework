@@ -1,0 +1,35 @@
+name: Publish NPM Packages
+
+on:
+    push:
+        branches:
+            - master
+            - ci/package-publishing
+
+jobs:
+    publish:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v2
+
+            - name: Cached node_modules
+              uses: actions/cache@v2
+              id: cached-node-modules
+              with:
+                path: "**/node_modules"
+                key: ${{ runner.os }}-nodemodules-${{ hashFiles('**/package-lock.json') }}
+                restore-keys: ${{ runner.os }}-nodemodules-
+
+            - name: Install Dependencies
+              run: npm install
+              if: steps.cached-node-modules.outputs.cache-hit != 'true'
+
+            - name: Bootstrap and Link
+              run: |
+                npm run bootstrap
+                npm run link
+
+            - name: Build
+              run: npm run build
+
